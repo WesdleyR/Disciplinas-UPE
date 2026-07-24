@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+libs/
+output/
+completed_courses.json
+
 # C extensions
 *.so
 

@@ -1,0 +1,3 @@
+Comando de build (gera o executável em dist/):
+
+pyinstaller --name="Disciplinas UPE" --onefile --windowed --icon=icon.ico --add-data="sheets;sheets" --hidden-import=PySide6.QtCore --hidden-import=PySide6.QtGui --hidden-import=PySide6.QtWidgets --collect-data=darkdetect main.py
