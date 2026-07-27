@@ -1,13 +1,16 @@
 import sys
 import os
 import json
+import shutil
 import importlib.util
 import darkdetect
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
                             QTableWidget, QTableWidgetItem, QHeaderView,
-                            QCheckBox, QLabel, QLineEdit, QHBoxLayout, QProgressBar)
+                            QCheckBox, QLabel, QLineEdit, QHBoxLayout, QProgressBar,
+                            QPushButton, QFileDialog, QMessageBox)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon
+import pdf_importer
 
 def resource_path(relative_path):
     """Obtém o caminho absoluto para o recurso, funcionando tanto em desenvolvimento quanto compilado"""
@@ -34,7 +37,7 @@ def app_dir_path(relative_path):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Disciplinas UPE - Por WesdleyR")
+        self.setWindowTitle("Planilhas UPE")
         self.setMinimumSize(1200, 800)
         
         # Configurar o ícone da janela
@@ -107,12 +110,35 @@ class MainWindow(QMainWindow):
         """Retorna o caminho gravável para o arquivo de progresso do usuário."""
         return app_dir_path("completed_courses.json")
 
+    def get_sheets_dir(self):
+        """Retorna a pasta gravável de disciplinas (ao lado do executável).
+
+        A pasta sheets/ embutida no executável (via --add-data) é somente
+        leitura em modo compilado (_MEIPASS é apagada a cada execução). Como
+        o botão "Importar PDF do SIGA" precisa gravar novos arquivos .py que
+        sobrevivam ao fechar o app, mantemos uma cópia gravável ao lado do
+        executável e é dela que o app sempre lê. Na primeiríssima execução,
+        essa cópia é criada a partir dos arquivos padrão embutidos no app.
+        """
+        writable_dir = app_dir_path("sheets")
+
+        if not os.path.exists(writable_dir):
+            bundled_dir = resource_path("sheets")
+            if os.path.exists(bundled_dir):
+                shutil.copytree(bundled_dir, writable_dir)
+            else:
+                os.makedirs(writable_dir, exist_ok=True)
+
+        return writable_dir
+
     def load_sheet_modules(self):
-        # A pasta "sheets" é um recurso somente-leitura embutido no
-        # executável (veja --add-data no requirements.txt / .spec), então
-        # usamos resource_path (que aponta para _MEIPASS quando compilado).
-        sheets_dir = resource_path("sheets")
-        
+        sheets_dir = self.get_sheets_dir()
+
+        # Reseta o estado para permitir recarregar com segurança (usado
+        # depois de importar um novo PDF do SIGA, por exemplo).
+        self.all_courses = {}
+        self.mandatory_codes = []
+
         if not os.path.exists(sheets_dir):
             print(f"Diretório {sheets_dir} não encontrado")
             return
@@ -145,12 +171,103 @@ class MainWindow(QMainWindow):
             self.tabs.addTab(tab, module_name.capitalize())
             self.setup_tab(tab, module.DISCIPLINAS)
 
+    def get_import_button_stylesheet(self):
+        """Retorna o CSS do botão de importar PDF, de acordo com o tema atual"""
+        return f"""
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: {self.colors['tab_background']};
+                border: none;
+                border-radius: 6px;
+                padding: 12px 16px;
+                font-size: 13px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent']};
+            }}
+            QPushButton:pressed {{
+                padding-top: 13px;
+                padding-bottom: 11px;
+            }}
+        """
+
+    def import_pdf_dialog(self):
+        """Abre um seletor de arquivo, lê o PDF do Perfil Curricular do SIGA
+        e regenera basico.py, profissional.py e eletivas.py com os dados
+        extraídos (incluindo pré-requisitos e co-requisitos reais)."""
+        pdf_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Selecione o PDF do Perfil Curricular do SIGA",
+            "",
+            "Arquivos PDF (*.pdf)"
+        )
+        if not pdf_path:
+            return  # usuário cancelou
+
+        try:
+            by_category, warnings = pdf_importer.import_pdf(pdf_path)
+        except pdf_importer.PDFImportError as e:
+            QMessageBox.critical(self, "Não foi possível importar", str(e))
+            return
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Erro ao ler o PDF",
+                f"Ocorreu um erro inesperado ao processar o arquivo:\n{e}"
+            )
+            return
+
+        total = sum(len(v) for v in by_category.values())
+        resumo = (
+            f"Encontrei {total} disciplina(s) no PDF:\n\n"
+            f"  • Básico: {len(by_category['basico'])}\n"
+            f"  • Profissional: {len(by_category['profissional'])}\n"
+            f"  • Eletivas: {len(by_category['eletivas'])}\n\n"
+        )
+        if warnings:
+            resumo += f"⚠ {len(warnings)} aviso(s) durante a leitura (veja detalhes se algo faltar).\n\n"
+        resumo += (
+            "Isso vai SUBSTITUIR as disciplinas cadastradas atualmente "
+            "(seu progresso marcado nas caixas de seleção é mantido). Continuar?"
+        )
+
+        confirm = QMessageBox.question(
+            self, "Confirmar importação", resumo,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        sheets_dir = self.get_sheets_dir()
+        for category, filename in [
+            ("basico", "basico.py"),
+            ("profissional", "profissional.py"),
+            ("eletivas", "eletivas.py"),
+        ]:
+            content = pdf_importer.build_file_content(by_category[category])
+            with open(os.path.join(sheets_dir, filename), "w", encoding="utf-8") as f:
+                f.write(content)
+
+        # Recarrega as abas com as disciplinas recém-importadas
+        self.tabs.clear()
+        self.load_sheet_modules()
+        self.update_overall_progress()
+
+        mensagem_final = f"Importação concluída! {total} disciplina(s) carregada(s)."
+        if warnings:
+            mensagem_final += "\n\nAvisos:\n" + "\n".join(f"• {w}" for w in warnings)
+        QMessageBox.information(self, "Importação concluída", mensagem_final)
+
     def setup_tab(self, tab, disciplinas):
         layout = QVBoxLayout()
         layout.setSpacing(20)
         layout.setContentsMargins(20, 20, 20, 20)
         
-        # Adicionar instrução
+        # Adicionar instrução + botão de importar PDF, lado a lado
+        instruction_layout = QHBoxLayout()
+        instruction_layout.setSpacing(12)
+
         instruction = QLabel("Clique nas caixas de seleção para marcar as disciplinas que você já cursou.\n"
                            "As disciplinas disponíveis para cursar serão destacadas em verde.")
         instruction.setStyleSheet(f"""
@@ -163,7 +280,15 @@ class MainWindow(QMainWindow):
                 border: 1px solid {self.colors['border']};
             }}
         """)
-        layout.addWidget(instruction)
+        instruction_layout.addWidget(instruction, stretch=1)
+
+        import_button = QPushButton("📄 Importar PDF do SIGA")
+        import_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        import_button.setStyleSheet(self.get_import_button_stylesheet())
+        import_button.clicked.connect(self.import_pdf_dialog)
+        instruction_layout.addWidget(import_button, alignment=Qt.AlignmentFlag.AlignTop)
+
+        layout.addLayout(instruction_layout)
 
         # Adicionar campo de pesquisa
         search_layout = QHBoxLayout()
@@ -603,6 +728,11 @@ class MainWindow(QMainWindow):
                         border: 1px solid {self.colors['border']};
                     }}
                 """)
+
+            # Atualizar botão de importar PDF
+            import_button = tab.findChild(QPushButton)
+            if import_button:
+                import_button.setStyleSheet(self.get_import_button_stylesheet())
             
             # Atualizar campo de pesquisa
             search_label = tab.findChildren(QLabel)[1] if len(tab.findChildren(QLabel)) > 1 else None
