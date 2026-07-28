@@ -17,12 +17,11 @@ Aplicativo desktop feito em **Python + PySide6** para ajudar estudantes da **Uni
 ## 🖥️ Como usar
 
 ### Rodando a partir do código-fonte
-\`\`\`bash
+bash
 git clone https://github.com/WesdleyR/Disciplinas-UPE.git
 cd Disciplinas-UPE
 pip install -r requirements.txt
 python main.py
-\`\`\`
 
 ## 🛠️ Tecnologias
 
@@ -33,11 +32,9 @@ python main.py
 
 ## 📄 Estrutura do projeto
 
-\`\`\`
-sheets/          → módulos com as disciplinas de cada bloco (básico, profissional, eletivas)
-main.py          → aplicação principal (interface e lógica)
-completed_courses.json → progresso salvo localmente
-\`\`\`
+- sheets/          → módulos com as disciplinas de cada bloco (básico, profissional, eletivas)
+- main.py          → aplicação principal (interface e lógica)
+- completed_courses.json → progresso salvo localmente
 
 ## 🤝 Contribuindo
 
