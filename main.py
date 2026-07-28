@@ -285,8 +285,10 @@ class MainWindow(QMainWindow):
         import_button = QPushButton("📄 Importar PDF do SIGA")
         import_button.setCursor(Qt.CursorShape.PointingHandCursor)
         import_button.setStyleSheet(self.get_import_button_stylesheet())
+        import_button.setFixedHeight(40)
+        import_button.setMinimumWidth(180)
         import_button.clicked.connect(self.import_pdf_dialog)
-        instruction_layout.addWidget(import_button, alignment=Qt.AlignmentFlag.AlignTop)
+        instruction_layout.addWidget(import_button, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         layout.addLayout(instruction_layout)
 
